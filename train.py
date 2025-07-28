@@ -21,6 +21,11 @@ class ModelConfigEmbedderCallback(pl.Callback):
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         checkpoint["model_config"] = self.model_config
 
+class GPUMemoryManagementCallback(pl.Callback):
+    def on_train_epoch_end(self, trainer, pl_module): # Clear unused GPU memory
+        torch.cuda.empty_cache()
+        #print("GPU memory cache cleared after epoch.")
+
 def main():
     torch.multiprocessing.set_sharing_strategy('file_system')
     args = get_all_args()
@@ -74,7 +79,7 @@ def main():
         remove_weight_norm_from_model(model.pretransform)
 
     if args.pretransform_ckpt_path:
-        model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path))
+        model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path), strict=False)
 
     # Remove weight_norm from the pretransform if specified
     if args.remove_pretransform_weight_norm == "post_load":
@@ -149,7 +154,7 @@ def main():
         strategy=strategy,
         precision=args.precision,
         accumulate_grad_batches=args.accum_batches, 
-        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
+        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback, GPUMemoryManagementCallback()],
         logger=logger,
         log_every_n_steps=1,
         max_epochs=10000000,

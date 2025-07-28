@@ -536,7 +536,7 @@ class DiTWrapper(ConditionedDiffusionModel):
                 scale_phi: float = 0.0,
                 **kwargs):
 
-        assert batch_cfg, "batch_cfg must be True for DiTWrapper"
+        #assert batch_cfg, "batch_cfg must be True for DiTWrapper"
         #assert negative_input_concat_cond is None, "negative_input_concat_cond is not supported for DiTWrapper"
 
         return self.model(
