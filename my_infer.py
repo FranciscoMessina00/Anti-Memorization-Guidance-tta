@@ -7,7 +7,8 @@ from einops import rearrange
 from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.inference.my_generation import my_generate_diffusion_cond
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda:0"
 
 # Download model
 model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
@@ -16,11 +17,11 @@ sample_size = model_config["sample_size"]
 
 model = model.to(device)
 
-tot = 4.001
+tot = 1.714
 
 # Set up text and timing conditioning
 conditioning = [{
-    "prompt": '"Multisamples created with subsynth. Eerie horror film sound in middle and higher registers. Normalized and converted to AIFF in cool edit 96. File name indicates frequency for example: HORROC04.aif= C4, where last 3 characters are ""C04"""',
+    "prompt": '"ATTACK loop 140 bpm-00.wav" till "ATTACK loop 140 bpm-31.wav" are all part of the "ATTACK LOOP 6" sample package and belong together as they are all variations on the same 1 measure 4/4 140 bpm drumloop. The loop has a techno-trance feel. The first four loops (00 till 03) contain some variations of the pure drumloop, where 00 is the most minimal and 03 the fullest. All other variations add other sound effects, some of them being sounds with a certain pitch, mostly C. These loop are suitable for your trance and techno productions. They were created using the Waldorf Attack VSTi within Cubase SX. Mastering (EQ, Stereo Enhancer, Multi-Band expand/compress/limit, dither, fades at start and/or end) done within Wavelab.',
     "seconds_start": 0, 
     "seconds_total": tot
 }]
@@ -31,7 +32,7 @@ negative_conditioning = [{
 }]
 
 print("Model objective: " + model.diffusion_objective)
-for i in range(7, 30):
+for i in range(0, 1):
 # Generate stereo audio
     # with torch.no_grad():
         output, closest_id = my_generate_diffusion_cond(
@@ -47,9 +48,9 @@ for i in range(7, 30):
             sampler_type="my-dpmpp-3m-sde",
             device=device,
             # seed = 2556487306,
-            c1=10, #10
-            c2=15, #15
-            c3=20, #40
+            c1=10, #10 # 40 when alone
+            c2=0, #15 # 40 when alone
+            c3=0, #20 # 40 when alone # 80 actually reduces
             generation=i
         )
 
@@ -61,8 +62,8 @@ for i in range(7, 30):
 
         # Peak normalize, clip, convert to int16, and save to file
         output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-        torchaudio.save(f"AMG_30Gens/6209_generation_{i}.wav", output, sample_rate)
+        torchaudio.save(f"/nas/home/fmessina/Experiments/5121_gens/tests/5121_generation_{i}.wav", output, sample_rate)
 
         # save the closest list to a file
-        with open("Closest_list/closest_list_6209_WITH_AMG.txt", "a") as f:
-            f.write("%s\n" % closest_id)
+        # with open("Closest_list/closest_list_5121_NO_AMG.txt", "a") as f:
+        #     f.write("%s\n" % closest_id)

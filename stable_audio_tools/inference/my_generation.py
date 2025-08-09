@@ -143,7 +143,7 @@ def my_generate_diffusion_cond(
 
     if diff_objective == "v":     
         # Clap init
-        CLAP = laion_clap.CLAP_Module(enable_fusion=False)
+        CLAP = laion_clap.CLAP_Module(enable_fusion=False, device=device)
         CLAP.load_ckpt()
         print("CLAP loaded")
         # CLAP tokenizer
@@ -227,12 +227,11 @@ emb_matrix  = torch.stack([
     torch.tensor(data[sound_id]['embedding'], 
                 dtype=torch.float32)
     for sound_id in ids
-], dim=0).cuda()  # → (N, D)
-    
+], dim=0).cuda("cuda:0")  # → (N, D)
 
 def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP=None, device="cuda", length=2097152, model=None):
     """Return a cond_fn that applies AMG‐despecification at each step."""
-    def despec_cond_fn(x, sigma, denoised, 
+    def despec_cond_fn(x, sigma, denoised,
                        conditioning_inputs, negative_conditioning_inputs, **_):
         global closest_id_final
         
@@ -260,7 +259,7 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         #print(audio_batch.shape)
         # Now CLAP can process a list of waveforms
         e_t = CLAP.get_audio_embedding_from_data(x = audio_batch/torch.max(audio_batch), use_tensor=True)  # shape (B, D)
-        e_t = e_t[0]
+        e_t = e_t[0].to(device)  # Get the first element and move to device
 
         # best_id = None
         # best_dist = float("inf")
@@ -296,46 +295,37 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         conditioning_inputs_N = model.get_conditioning_inputs(conditioning_tensors_N, negative=False)
         eps_cond_N = base_model_fn(x, sigma, **conditioning_inputs_N)
 
-        # e_prompt is shape [1, D], e_t is [B, D] → result [B]
-        # sigma_t = dot(e_t, audio_embed) #(e_t * audio_embed).sum(dim=-1).clamp(-1.0, 1.0)
-        sigma_t = (e_t * audio_embed).sum(dim=-1)
-        sim_scalar = sigma_t.sum()
+        # Similarity (cosine if embeddings normalized; here raw dot). Rename to cos_sim to avoid confusion with diffusion sigma.
+        cos_sim = (e_t * audio_embed).sum(dim=-1)
+        sim_scalar = cos_sim.sum()
         G_sim = torch.zeros_like(eps_cond_N)
         if c3 > 0:
-            grad_sigma = torch.autograd.grad(
-                sim_scalar, x, retain_graph=False
-            )[0]
+            grad_sigma = torch.autograd.grad(sim_scalar, x, retain_graph=False)[0]
             G_sim = c3 * torch.sqrt(1 - alpha_bar) * grad_sigma
 
-        # print("Similarity: ",sigma_t)
-        # sigma_t = torch.as_tensor(sigma_t, device=x.device)
-        # Dampening scale
-        s1 = (c1 * sigma_t).clamp(0, s0)  # shape [B]
-        s1_list.append(s1.item())
-        # print("s1: ", s1)
-
+        # Dampening scales based on similarity
+        s1 = (c1 * cos_sim).clamp(0, s0 - 1)  # shape [B]
+        s1_list.append(float(s1.item()))
         # Caption deduplication guidance s2
-        s2 = (c2 * sigma_t).clamp(0, s0 - s1.item())
+        s2 = (c2 * cos_sim).clamp(0, s0 - s1.item() - 1)
 
-
-        # print("s1: ", s1.item())
-        # print("s2: ", s2.item())
-        # Main CFG term and G_spe
-        #shape = [-1] + [1] * (eps_uncond.ndim - 1)
+        # Main CFG term and guidance components
         delta = eps_cond - eps_uncond
         delta_N = eps_cond_N - eps_uncond
         G_cfg  = s0 * delta
         G_spe = -s1 * delta
         G_dedup = -s2 * delta_N
-        # Form the dissimilarity guidance
-        
-        
-        # print("G_sim: ", G_sim.mean().item())
-        # print("G_dedup: ", G_dedup.mean().item())
-        # print("G_spe: ", G_spe.mean().item())
-        # print("G_cfg: ", G_cfg.mean().item())
-        # Return total guidance term
-        G_total = G_cfg + G_spe + G_dedup + G_sim
-        return G_total #/ sigma.square().view(*shape)
+
+        # Dynamic threshold schedule (parabolic in alpha_bar)
+        lambda_min, lambda_max = 0.4, 0.5
+        alpha = alpha_bar
+        lambda_t = lambda_min + (lambda_max - lambda_min) * (alpha ** 2)
+        # Activate extra guidance when similarity exceeds threshold
+        mask = (cos_sim > lambda_t).float()
+        mask = mask.view(-1, *([1] * (G_spe.ndim - 1)))  # broadcast shape [B,1,1]
+
+        additional = G_spe + G_dedup + G_sim
+        G_total = G_cfg + mask * additional
+        return G_total
 
     return despec_cond_fn

@@ -17,7 +17,8 @@ def make_cond_model_fn(model, cond_fn, cond_inputs, uncond_inputs):
             }
             denoised = model(x, sigma, **uncond_inputs, **runtime_flags)
             cond_grad = cond_fn(x, sigma, denoised=denoised, conditioning_inputs=cond_inputs, negative_conditioning_inputs=uncond_inputs, **runtime_flags).detach()
-            cond_denoised = denoised.detach() + cond_grad #* K.utils.append_dims(sigma**2, x.ndim)
+            # Apply sigma^2 scaling (restores standard k-diffusion cond_fn magnitude behavior)
+            cond_denoised = denoised.detach() + cond_grad * K.utils.append_dims(sigma**2, x.ndim)
         return cond_denoised
     return cond_model_fn
 
