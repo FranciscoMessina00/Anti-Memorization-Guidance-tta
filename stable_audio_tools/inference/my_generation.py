@@ -227,105 +227,97 @@ emb_matrix  = torch.stack([
     torch.tensor(data[sound_id]['embedding'], 
                 dtype=torch.float32)
     for sound_id in ids
-], dim=0).cuda("cuda:0")  # → (N, D)
+], dim=0).cuda("cuda:5")  # → (N, D)
 
 def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP=None, device="cuda", length=2097152, model=None):
     """Return a cond_fn that applies AMG‐despecification at each step."""
     def despec_cond_fn(x, sigma, denoised,
                        conditioning_inputs, negative_conditioning_inputs, **_):
         global closest_id_final
-        
         x.requires_grad_(True)
-        # eps_uncond = denoised from the empty prompt branch
-        eps_uncond = denoised
-        # get eps_cond by calling the same base_model_fn with real prompt
-        eps_cond   = base_model_fn(x, sigma, **conditioning_inputs)
+        # 1. Unconditional and conditional x0 predictions (VDenoiser outputs x0)
+        x0_uncond = denoised  # shape [B,C,L]
+        x0_cond   = base_model_fn(x, sigma, **conditioning_inputs)
 
-        # reconstruct x0_hat (Eq.12)
-        alpha_bar = 1.0 / (1.0 + sigma.pow(2))
-        x0_hat    = (x - (1 - alpha_bar).sqrt() * eps_uncond) / alpha_bar.sqrt()
-        # x0_hat    = x0_hat.detach()
-        latent_ratio   = model.pretransform.downsampling_ratio
-        latent_length  = length // latent_ratio
-        x0_trim   = x0_hat[:, :, :latent_length]
+        # 2. Compute alpha_bar (per batch) and derive epsilon estimates from x and x0
+        alpha_bar = 1.0 / (1.0 + sigma.pow(2))  # [B]
+        sqrt_ab   = alpha_bar.sqrt()
+        sqrt_1mab = (1 - alpha_bar).sqrt().clamp_min(1e-8)
+
+        # Broadcasting helper
+        expand = lambda t: t.view(-1, *([1] * (x0_uncond.ndim - 1)))
+
+        # Convert model x0 predictions to epsilon predictions: eps = (x_t - sqrt(alpha_bar)*x0)/sqrt(1-alpha_bar)
+        eps_uncond = (x - expand(sqrt_ab) * x0_uncond) / expand(sqrt_1mab)
+        eps_cond   = (x - expand(sqrt_ab) * x0_cond)   / expand(sqrt_1mab)
+
+        # 3. Decode (trim to original audio length in latent space) for CLAP similarity using uncond branch
+        latent_ratio  = model.pretransform.downsampling_ratio
+        latent_length = length // latent_ratio
+        x0_trim = x0_cond[:, :, :latent_length]
         x0_trim = model.pretransform.decode(x0_trim)
-        # CLAP embed & cosine similarity
 
-        # Move to CPU and convert to numpy
-        # x0_cpu = x0_trim.detach().cpu().numpy() # shape (B, C, T)
+        audio_batch = x0_trim.mean(dim=1)  # mono
+        # Normalize to [-1,1] scale for CLAP (avoid division by zero)
+        peak = audio_batch.abs().max().clamp_min(1e-6)
+        e_t = CLAP.get_audio_embedding_from_data(x=audio_batch/peak, use_tensor=True)
+        e_t = e_t[0].to(device)
 
-        # audio_batch = x0_cpu.mean(axis=1)
-        audio_batch = x0_trim.mean(dim=1)
-        #print(audio_batch.shape)
-        # Now CLAP can process a list of waveforms
-        e_t = CLAP.get_audio_embedding_from_data(x = audio_batch/torch.max(audio_batch), use_tensor=True)  # shape (B, D)
-        e_t = e_t[0].to(device)  # Get the first element and move to device
-
-        # best_id = None
-        # best_dist = float("inf")
-        # neighbour_cond = []
-        # with open('embeddings_new.json', 'r') as f:
-        #     data = json.load(f)
-            
-
-        #     for sound_id, val in data.items():
-        #         # Euclidean distance
-        #         dist = np.linalg.norm(e_t - val['embedding'])
-        #         if dist < best_dist:
-        #             best_dist = dist
-        #             best_id = sound_id
-        #             neighbour_cond = val['conditioning']
-
-        # 2) Compute all distances in one go:
-        #    broadcast e_t from [D] → [N, D], subtract, norm over last dim → [N]
-        dists = torch.linalg.norm(emb_matrix - e_t.unsqueeze(0), dim=1)
-
-        # 3) Find the best (smallest) distance:
-        best_idx = torch.argmin(dists).item()
-        best_id  = ids[best_idx]
-        best_dist= dists[best_idx].item()
+        # 4. Nearest neighbour in embedding space
+        with torch.no_grad():  # search doesn't need gradients
+            dists = torch.linalg.norm(emb_matrix - e_t.unsqueeze(0), dim=1)
+            best_idx = torch.argmin(dists).item()
+            best_id  = ids[best_idx]
+            best_dist= dists[best_idx].item()
         neighbour_cond = data[best_id]['conditioning']
-        
         closest_id_final = best_id
-        print(f"Closest ID (Euclidean) is {best_id} with distance {best_dist:.4f}")
+        print(f"Closest ID (Euclidean) is {best_id} dist {best_dist:.4f}")
         audio_embed = torch.tensor(data[best_id]['embedding'], device=device, dtype=e_t.dtype)
-        # audio_embed_np = np.array(data[best_id]['embedding'], dtype=float)
 
+        # 5. Conditional prediction for neighbour caption
         conditioning_tensors_N = model.conditioner([neighbour_cond], device)
         conditioning_inputs_N = model.get_conditioning_inputs(conditioning_tensors_N, negative=False)
-        eps_cond_N = base_model_fn(x, sigma, **conditioning_inputs_N)
+        x0_cond_N = base_model_fn(x, sigma, **conditioning_inputs_N)
+        eps_cond_N = (x - expand(sqrt_ab) * x0_cond_N) / expand(sqrt_1mab)
 
-        # Similarity (cosine if embeddings normalized; here raw dot). Rename to cos_sim to avoid confusion with diffusion sigma.
-        cos_sim = (e_t * audio_embed).sum(dim=-1)
+        # 6. Similarity scalar (dot). (Could normalize embeddings if desired.)
+        cos_sim = (e_t * audio_embed).sum(dim=-1)  # scalar
         sim_scalar = cos_sim.sum()
-        G_sim = torch.zeros_like(eps_cond_N)
+        G_sim = torch.zeros_like(x0_cond_N)
         if c3 > 0:
-            grad_sigma = torch.autograd.grad(sim_scalar, x, retain_graph=False)[0]
-            G_sim = c3 * torch.sqrt(1 - alpha_bar) * grad_sigma
+            # Gradient of similarity w.r.t. x (through x0_uncond -> decode -> embedding model) if graph allows
+            try:
+                grad_sigma = torch.autograd.grad(sim_scalar, x, retain_graph=True, allow_unused=True)[0]
+                if grad_sigma is not None:
+                    G_sim = - c3 * torch.sqrt(1 - alpha_bar) * grad_sigma
+                    print(f"Gradient of similarity w.r.t. x: {grad_sigma.norm().item():.4f}")
+            except RuntimeError:
+                pass  # Fallback: leave G_sim zeros if path not differentiable
 
-        # Dampening scales based on similarity
-        s1 = (c1 * cos_sim).clamp(0, s0 - 1)  # shape [B]
+        # 7. Dynamic scales s1, s2 based on similarity
+        s1 = (c1 * cos_sim).clamp(0, s0 - 1)
         s1_list.append(float(s1.item()))
-        # Caption deduplication guidance s2
         s2 = (c2 * cos_sim).clamp(0, s0 - s1.item() - 1)
+        print(f"Similarity: {cos_sim.item():.4f}")
 
-        # Main CFG term and guidance components
-        delta = eps_cond - eps_uncond
-        delta_N = eps_cond_N - eps_uncond
-        G_cfg  = s0 * delta
-        G_spe = -s1 * delta
-        G_dedup = -s2 * delta_N
+        # 8. Guidance terms computed in epsilon space then mapped back to x0 space.
+        #    x0 = (x/sqrt_ab) - (sqrt_1mab/sqrt_ab)*eps  =>  Δx0 = -(sqrt_1mab/sqrt_ab) * Δeps
+        delta_eps   = eps_cond   - eps_uncond
+        delta_eps_N = eps_cond_N - eps_uncond
+        scale_eps2x0 = - (sqrt_1mab / sqrt_ab)  # [B]
+        scale_b = expand(scale_eps2x0)
+        delta_x0   = scale_b * delta_eps
+        delta_x0_N = scale_b * delta_eps_N
+        G_cfg   = s0 * delta_x0
+        G_spe   = -s1 * delta_x0
+        G_dedup = -s2 * delta_x0_N
 
-        # Dynamic threshold schedule (parabolic in alpha_bar)
+        # 9. Parabolic gating based on alpha_bar
         lambda_min, lambda_max = 0.4, 0.5
-        alpha = alpha_bar
-        lambda_t = lambda_min + (lambda_max - lambda_min) * (alpha ** 2)
-        # Activate extra guidance when similarity exceeds threshold
-        mask = (cos_sim > lambda_t).float()
-        mask = mask.view(-1, *([1] * (G_spe.ndim - 1)))  # broadcast shape [B,1,1]
+        lambda_t = lambda_min + (lambda_max - lambda_min) * (alpha_bar ** 2)
+        mask = (cos_sim > lambda_t).float().view(-1, *([1] * (G_spe.ndim - 1)))
 
         additional = G_spe + G_dedup + G_sim
-        G_total = G_cfg + mask * additional
-        return G_total
+        return G_cfg + mask * additional
 
     return despec_cond_fn

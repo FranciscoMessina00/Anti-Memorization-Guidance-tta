@@ -8,7 +8,7 @@ from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.inference.my_generation import my_generate_diffusion_cond
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
-device = "cuda:0"
+device = "cuda:5"
 
 # Download model
 model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
@@ -22,6 +22,7 @@ tot = 1.714
 # Set up text and timing conditioning
 conditioning = [{
     "prompt": '"ATTACK loop 140 bpm-00.wav" till "ATTACK loop 140 bpm-31.wav" are all part of the "ATTACK LOOP 6" sample package and belong together as they are all variations on the same 1 measure 4/4 140 bpm drumloop. The loop has a techno-trance feel. The first four loops (00 till 03) contain some variations of the pure drumloop, where 00 is the most minimal and 03 the fullest. All other variations add other sound effects, some of them being sounds with a certain pitch, mostly C. These loop are suitable for your trance and techno productions. They were created using the Waldorf Attack VSTi within Cubase SX. Mastering (EQ, Stereo Enhancer, Multi-Band expand/compress/limit, dither, fades at start and/or end) done within Wavelab.',
+    # "prompt": 'A drum loop with a lot of ride, 120 bpm',
     "seconds_start": 0, 
     "seconds_total": tot
 }]
@@ -48,9 +49,9 @@ for i in range(0, 1):
             sampler_type="my-dpmpp-3m-sde",
             device=device,
             # seed = 2556487306,
-            c1=10, #10 # 40 when alone
+            c1=0, #10 # 40 when alone
             c2=0, #15 # 40 when alone
-            c3=0, #20 # 40 when alone # 80 actually reduces
+            c3=10, #20 # 40 when alone # 80 actually reduces
             generation=i
         )
 
