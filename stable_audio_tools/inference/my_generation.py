@@ -227,7 +227,7 @@ emb_matrix  = torch.stack([
     torch.tensor(data[sound_id]['embedding'], 
                 dtype=torch.float32)
     for sound_id in ids
-], dim=0).cuda("cuda:5")  # → (N, D)
+], dim=0).cuda("cuda:4")  # → (N, D)
 
 def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP=None, device="cuda", length=2097152, model=None):
     """Return a cond_fn that applies AMG‐despecification at each step."""
@@ -290,7 +290,7 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
                 grad_sigma = torch.autograd.grad(sim_scalar, x, retain_graph=True, allow_unused=True)[0]
                 if grad_sigma is not None:
                     G_sim = - c3 * torch.sqrt(1 - alpha_bar) * grad_sigma
-                    print(f"Gradient of similarity w.r.t. x: {grad_sigma.norm().item():.4f}")
+                    print(f"Norm of sim: {G_sim.norm().item():.4f}")
             except RuntimeError:
                 pass  # Fallback: leave G_sim zeros if path not differentiable
 
@@ -309,8 +309,11 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         delta_x0   = scale_b * delta_eps
         delta_x0_N = scale_b * delta_eps_N
         G_cfg   = s0 * delta_x0
+        print(f"Norm of cfg: {G_cfg.norm().item():.4f}")
         G_spe   = -s1 * delta_x0
+        print(f"Norm of spec: {G_spe.norm().item():.4f}")
         G_dedup = -s2 * delta_x0_N
+        print(f"Norm of dedup: {G_dedup.norm().item():.4f}")
 
         # 9. Parabolic gating based on alpha_bar
         lambda_min, lambda_max = 0.4, 0.5

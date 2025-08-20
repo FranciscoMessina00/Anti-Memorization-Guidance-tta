@@ -60,7 +60,7 @@ def process_csv(file_path, access_token):
                 output_filename = f"soundDataset/sound_{sound_id}.wav"
                 if not os.path.exists(output_filename):
                     download_sound(sound_id, access_token, output_filename)
-                    time.sleep(1)
+                    time.sleep(1.5)
     except FileNotFoundError:
         print(f"CSV file not found at path: {file_path}")
     except Exception as err:

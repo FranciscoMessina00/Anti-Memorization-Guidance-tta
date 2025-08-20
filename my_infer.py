@@ -8,7 +8,8 @@ from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.inference.my_generation import my_generate_diffusion_cond
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
-device = "cuda:5"
+device = "cuda:4"
+amg_type = "despec_dissim"
 
 # Download model
 model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
@@ -17,12 +18,13 @@ sample_size = model_config["sample_size"]
 
 model = model.to(device)
 
-tot = 1.714
+tot = 6
+cfg_scale = 7
 
 # Set up text and timing conditioning
 conditioning = [{
-    "prompt": '"ATTACK loop 140 bpm-00.wav" till "ATTACK loop 140 bpm-31.wav" are all part of the "ATTACK LOOP 6" sample package and belong together as they are all variations on the same 1 measure 4/4 140 bpm drumloop. The loop has a techno-trance feel. The first four loops (00 till 03) contain some variations of the pure drumloop, where 00 is the most minimal and 03 the fullest. All other variations add other sound effects, some of them being sounds with a certain pitch, mostly C. These loop are suitable for your trance and techno productions. They were created using the Waldorf Attack VSTi within Cubase SX. Mastering (EQ, Stereo Enhancer, Multi-Band expand/compress/limit, dither, fades at start and/or end) done within Wavelab.',
-    # "prompt": 'A drum loop with a lot of ride, 120 bpm',
+    "prompt": 'Drum Loop by Stolting Media Group.\nvisit <a href=\"http://www.stoltingmediagroup.com\" rel=\"nofollow\">http://www.stoltingmediagroup.com</a>',
+    # "prompt": 'A rhytmic guitar in Bossa Nova style',
     "seconds_start": 0, 
     "seconds_total": tot
 }]
@@ -33,13 +35,13 @@ negative_conditioning = [{
 }]
 
 print("Model objective: " + model.diffusion_objective)
-for i in range(0, 1):
+for i in range(1000):
 # Generate stereo audio
     # with torch.no_grad():
         output, closest_id = my_generate_diffusion_cond(
             model,
             steps=100,
-            cfg_scale=7,
+            cfg_scale=cfg_scale,
             conditioning=conditioning,
             negative_conditioning=negative_conditioning,
             sample_size=sample_size,
@@ -49,9 +51,9 @@ for i in range(0, 1):
             sampler_type="my-dpmpp-3m-sde",
             device=device,
             # seed = 2556487306,
-            c1=0, #10 # 40 when alone
-            c2=0, #15 # 40 when alone
-            c3=10, #20 # 40 when alone # 80 actually reduces
+            c1=cfg_scale-1, # cfg_scale-1
+            c2=cfg_scale-1, # cfg_scale-1
+            c3=1000, #1000
             generation=i
         )
 
@@ -63,8 +65,8 @@ for i in range(0, 1):
 
         # Peak normalize, clip, convert to int16, and save to file
         output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-        torchaudio.save(f"/nas/home/fmessina/Experiments/5121_gens/tests/5121_generation_{i}.wav", output, sample_rate)
+        torchaudio.save(f"/nas/home/fmessina/Experiments/596573_gens/{amg_type}/596573_generation_{i}.wav", output, sample_rate)
 
         # save the closest list to a file
-        # with open("Closest_list/closest_list_5121_NO_AMG.txt", "a") as f:
-        #     f.write("%s\n" % closest_id)
+        with open(f"/nas/home/fmessina/Experiments/596573_gens/graphs/closest_list/closest_{amg_type}.txt", "a") as f:
+            f.write("%s\n" % closest_id)
