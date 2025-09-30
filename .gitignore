@@ -163,3 +163,5 @@ cython_debug/
 *.wav
 wandb/*
 huggingface_token.txt
+*.png
+*.pdf

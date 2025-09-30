@@ -227,7 +227,7 @@ emb_matrix  = torch.stack([
     torch.tensor(data[sound_id]['embedding'], 
                 dtype=torch.float32)
     for sound_id in ids
-], dim=0).cuda("cuda:6")  # → (N, D)
+], dim=0).cuda("cuda:0")  # → (N, D)
 
 def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP=None, device="cuda", length=2097152, model=None):
     """Return a cond_fn that applies AMG‐despecification at each step."""
@@ -298,7 +298,7 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         s1 = (c1 * cos_sim).clamp(0, s0 - 1)
         s1_list.append(float(s1.item()))
         s2 = (c2 * cos_sim).clamp(0, s0 - s1.item() - 1)
-        print(f"Similarity: {cos_sim.item():.4f}")
+        # print(f"Similarity: {cos_sim.item():.4f}")
 
         # 8. Guidance terms computed in epsilon space then mapped back to x0 space.
         #    x0 = (x/sqrt_ab) - (sqrt_1mab/sqrt_ab)*eps  =>  Δx0 = -(sqrt_1mab/sqrt_ab) * Δeps
@@ -309,17 +309,17 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         delta_x0   = scale_b * delta_eps
         delta_x0_N = scale_b * delta_eps_N
         G_cfg   = s0 * delta_x0
-        print(f"Norm of cfg: {G_cfg.norm().item():.4f}")
+        # print(f"Norm of cfg: {G_cfg.norm().item():.4f}")
         G_spe   = -s1 * delta_x0
-        print(f"Norm of spec: {G_spe.norm().item():.4f}")
+        # print(f"Norm of spec: {G_spe.norm().item():.4f}")
         G_dedup = -s2 * delta_x0_N
-        print(f"Norm of dedup: {G_dedup.norm().item():.4f}")
+        # print(f"Norm of dedup: {G_dedup.norm().item():.4f}")
 
         # 9. Parabolic gating based on alpha_bar
         lambda_min, lambda_max = 0.4, 0.5
         lambda_t = lambda_min + (lambda_max - lambda_min) * (alpha_bar ** 2)
         mask = (cos_sim > lambda_t).float().view(-1, *([1] * (G_spe.ndim - 1)))
-
+        print(f"lambda_t: {lambda_t.item():.4f}")
         additional = G_spe + G_dedup + G_sim
         return G_cfg + mask * additional
 

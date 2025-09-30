@@ -8,7 +8,7 @@ from stable_audio_tools import get_pretrained_model
 from stable_audio_tools.inference.my_generation import my_generate_diffusion_cond
 
 # device = "cuda" if torch.cuda.is_available() else "cpu"
-device = "cuda:3"
+device = "cuda:0"
 amg_type = "dedup_despec"
 
 # Download model
@@ -20,7 +20,7 @@ model = model.to(device)
 
 tot = 14.436
 cfg_scale = 7
-id = 2627
+id = 1
 
 # Set up text and timing conditioning
 conditioning = [{
@@ -36,7 +36,7 @@ negative_conditioning = [{
 }]
 
 print("Model objective: " + model.diffusion_objective)
-for i in range(100):
+for i in range(1):
 # Generate stereo audio
     # with torch.no_grad():
         output, closest_id = my_generate_diffusion_cond(
@@ -68,7 +68,7 @@ for i in range(100):
         output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
         # Ensure output directory exists, and skip saving if the file already exists
-        audio_dir = f"/nas/home/fmessina/Experiments/{id}_gens/{amg_type}"
+        audio_dir = f"/nas/home/fmessina/Experiments/tests/{id}_gens/{amg_type}"
         os.makedirs(audio_dir, exist_ok=True)
         audio_path = os.path.join(audio_dir, f"{id}_generation_{i}.wav")
         if os.path.exists(audio_path):
@@ -78,12 +78,12 @@ for i in range(100):
             print(f"[INFO] Saved: {audio_path}")
 
         # Ensure closest list directory exists, check file, then append
-        closest_dir = f"/nas/home/fmessina/Experiments/{id}_gens/graphs/closest_list"
-        os.makedirs(closest_dir, exist_ok=True)
-        closest_file = os.path.join(closest_dir, f"closest_{amg_type}.txt")
-        if not os.path.exists(closest_file):
-            # create the file if missing
-            open(closest_file, "w").close()
-            print(f"[INFO] Created closest list file: {closest_file}")
-        with open(closest_file, "a") as f:
-            f.write(f"{closest_id}\n")
+        # closest_dir = f"/nas/home/fmessina/Experiments/{id}_gens/graphs/closest_list"
+        # os.makedirs(closest_dir, exist_ok=True)
+        # closest_file = os.path.join(closest_dir, f"closest_{amg_type}.txt")
+        # if not os.path.exists(closest_file):
+        #     # create the file if missing
+        #     open(closest_file, "w").close()
+        #     print(f"[INFO] Created closest list file: {closest_file}")
+        # with open(closest_file, "a") as f:
+        #     f.write(f"{closest_id}\n")
