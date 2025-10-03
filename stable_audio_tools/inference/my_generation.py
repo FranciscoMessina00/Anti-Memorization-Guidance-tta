@@ -14,13 +14,6 @@ from .my_sampling import my_sample_k, make_cond_model_fn
 import os, sys, json
 import matplotlib.pyplot as plt
 
-# 0) before you start sampling, create an empty list:
-s1_list = []
-closest_id_final = None
-
-# 1) Compute the absolute path to CLAP/src
-#    Adjust the number of '..' to go from 
-#    stable-audio-tools/.../inference back to /nas/home/fmessina
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, '..','..','..'))  
 LOCAL_CLAP = os.path.join(ROOT, 'CLAP', 'src')
@@ -51,7 +44,8 @@ def my_generate_diffusion_cond(
         c1=5.0,
         c2=5.0,
         c3=5.0,
-        generation=0,
+        lambda_min=0.4,
+        lambda_max=0.5,
         **sampler_kwargs
         ) -> torch.Tensor: 
     """
@@ -73,21 +67,17 @@ def my_generate_diffusion_cond(
         return_latents: Whether to return the latents used for generation instead of the decoded audio.
         **sampler_kwargs: Additional keyword arguments to pass to the sampler.    
     """
-    global s1_list
-    # The length of the output in audio samples 
-    s1_list = []
+    
     audio_sample_size = sample_size
     effective_audio_length = int(conditioning[0]["seconds_total"] * sample_rate)
 
     # If this is latent diffusion, change sample_size instead to the downsampled latent size
     if model.pretransform is not None:
         sample_size = sample_size // model.pretransform.downsampling_ratio
-        print("Downsampling ratio: ", model.pretransform.downsampling_ratio)
         
     # Seed
     # The user can explicitly set the seed to deterministically generate the same output. Otherwise, use a random seed.
     seed = seed if seed != -1 else np.random.randint(0, 2**32 - 1)
-    print(seed)
     torch.manual_seed(seed)
     # Define the initial noise immediately after setting the seed
     noise = torch.randn([batch_size, model.io_channels, sample_size], device=device)
@@ -145,31 +135,18 @@ def my_generate_diffusion_cond(
         # Clap init
         CLAP = laion_clap.CLAP_Module(enable_fusion=False, device=device)
         CLAP.load_ckpt()
-        print("CLAP loaded")
         # CLAP tokenizer
         e_prompt = CLAP.get_text_embedding([conditioning[0]["prompt"]])
-        # e_prompt = CLAP.get_text_embedding(["A bird chirping"]) # Example of closet embedding really far from the prompt
         e_prompt = e_prompt[0]
-        # e_prompt = torch.from_numpy(e_prompt).to(device)
-        # e_prompt = e_prompt / e_prompt.norm(dim=-1, keepdim=True)
+        
         ####
         base_denoiser = K.external.VDenoiser(model.model)
-        despec_fn     = make_despec_fn(base_denoiser, e_prompt, s0=cfg_scale, c1=c1, c2=c2, c3=c3, CLAP=CLAP, device=device, length=effective_audio_length, model=model)
+        despec_fn     = make_despec_fn(base_denoiser, e_prompt, s0=cfg_scale, c1=c1, c2=c2, c3=c3, lambda_min=lambda_min, lambda_max=lambda_max, CLAP=CLAP, device=device, length=effective_audio_length, model=model)
         guided        = make_cond_model_fn(base_denoiser, despec_fn, conditioning_inputs, negative_conditioning_tensors)
         ####
 
         sampled = my_sample_k(guided, noise, init_audio, steps, **sampler_kwargs, **conditioning_inputs, **negative_conditioning_tensors, cfg_scale=cfg_scale, batch_cfg=False, device=device)
-        # s_eff = [cfg_scale - v for v in s1_list]
 
-        # plt.figure()
-        # plt.plot(s_eff, linewidth=2)      # one distinct plot; no color specifier
-        # plt.xlabel("Sampling step")
-        # # plt.ylabel("Effective guidance scale\n$(s_0 - s_1)$")
-        # plt.ylabel("Similarity")
-        # plt.title("Similarity over sampling steps")
-        # plt.tight_layout()
-        # plt.savefig(f"AMG_30Gens/Graphs/505_similarityscale_gen_{generation}.png", dpi=300)
-        # plt.show()
     elif diff_objective == "rectified_flow":
 
         if "sigma_min" in sampler_kwargs:
@@ -215,7 +192,7 @@ def my_generate_diffusion_cond(
         # 'sampled' is now on CPU. If you need it on the GPU for subsequent steps:
         sampled = sampled.to('cpu') # where 'device' is your target CUDA device
     # Return audio
-    return sampled, closest_id_final
+    return sampled
 
 # 1) Load once (outside your step loop!), convert embeddings to tensors:
 with open('embeddings_new.json','r') as f:
@@ -227,19 +204,18 @@ emb_matrix  = torch.stack([
     torch.tensor(data[sound_id]['embedding'], 
                 dtype=torch.float32)
     for sound_id in ids
-], dim=0).cuda("cuda:0")  # → (N, D)
+], dim=0).cuda("cuda")  # → (N, D)
 
-def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP=None, device="cuda", length=2097152, model=None):
+def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, lambda_min=0.4, lambda_max=0.5, CLAP=None, device="cuda", length=2097152, model=None):
     """Return a cond_fn that applies AMG‐despecification at each step."""
     def despec_cond_fn(x, sigma, denoised,
                        conditioning_inputs, negative_conditioning_inputs, **_):
-        global closest_id_final
         x.requires_grad_(True)
-        # 1. Unconditional and conditional x0 predictions (VDenoiser outputs x0)
+        # Unconditional and conditional x0 predictions (VDenoiser outputs x0)
         x0_uncond = denoised  # shape [B,C,L]
         x0_cond   = base_model_fn(x, sigma, **conditioning_inputs)
 
-        # 2. Compute alpha_bar (per batch) and derive epsilon estimates from x and x0
+        # Compute alpha_bar (per batch) and derive epsilon estimates from x and x0
         alpha_bar = 1.0 / (1.0 + sigma.pow(2))  # [B]
         sqrt_ab   = alpha_bar.sqrt()
         sqrt_1mab = (1 - alpha_bar).sqrt().clamp_min(1e-8)
@@ -251,7 +227,6 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         eps_uncond = (x - expand(sqrt_ab) * x0_uncond) / expand(sqrt_1mab)
         eps_cond   = (x - expand(sqrt_ab) * x0_cond)   / expand(sqrt_1mab)
 
-        # 3. Decode (trim to original audio length in latent space) for CLAP similarity using uncond branch
         latent_ratio  = model.pretransform.downsampling_ratio
         latent_length = length // latent_ratio
         x0_trim = x0_cond[:, :, :latent_length]
@@ -263,63 +238,54 @@ def make_despec_fn(base_model_fn, e_prompt, s0=7.5, c1=5.0, c2=5.0, c3=5.0, CLAP
         e_t = CLAP.get_audio_embedding_from_data(x=audio_batch/peak, use_tensor=True)
         e_t = e_t[0].to(device)
 
-        # 4. Nearest neighbour in embedding space
+        # Nearest neighbour in embedding space
         with torch.no_grad():  # search doesn't need gradients
             dists = torch.linalg.norm(emb_matrix - e_t.unsqueeze(0), dim=1)
             best_idx = torch.argmin(dists).item()
             best_id  = ids[best_idx]
             best_dist= dists[best_idx].item()
         neighbour_cond = data[best_id]['conditioning']
-        closest_id_final = best_id
-        print(f"Closest ID (Euclidean) is {best_id} dist {best_dist:.4f}")
         audio_embed = torch.tensor(data[best_id]['embedding'], device=device, dtype=e_t.dtype)
 
-        # 5. Conditional prediction for neighbour caption
+        # Conditional prediction for neighbour caption
         conditioning_tensors_N = model.conditioner([neighbour_cond], device)
         conditioning_inputs_N = model.get_conditioning_inputs(conditioning_tensors_N, negative=False)
         x0_cond_N = base_model_fn(x, sigma, **conditioning_inputs_N)
         eps_cond_N = (x - expand(sqrt_ab) * x0_cond_N) / expand(sqrt_1mab)
 
-        # 6. Similarity scalar (dot). (Could normalize embeddings if desired.)
+        # Similarity scalar (dot). (Could normalize embeddings if desired.)
         cos_sim = (e_t * audio_embed).sum(dim=-1)  # scalar
         sim_scalar = cos_sim.sum()
         G_sim = torch.zeros_like(x0_cond_N)
         if c3 > 0:
-            # Gradient of similarity w.r.t. x (through x0_uncond -> decode -> embedding model) if graph allows
+            # Gradient of similarity w.r.t. x (through x0_uncond -> decode -> embedding model)
             try:
                 grad_sigma = torch.autograd.grad(sim_scalar, x, retain_graph=True, allow_unused=True)[0]
                 if grad_sigma is not None:
                     G_sim = - c3 * torch.sqrt(1 - alpha_bar) * grad_sigma
-                    print(f"Norm of sim: {G_sim.norm().item():.4f}")
             except RuntimeError:
                 pass  # Fallback: leave G_sim zeros if path not differentiable
 
-        # 7. Dynamic scales s1, s2 based on similarity
+        # Dynamic scales s1, s2 based on similarity
         s1 = (c1 * cos_sim).clamp(0, s0 - 1)
-        s1_list.append(float(s1.item()))
         s2 = (c2 * cos_sim).clamp(0, s0 - s1.item() - 1)
-        # print(f"Similarity: {cos_sim.item():.4f}")
 
-        # 8. Guidance terms computed in epsilon space then mapped back to x0 space.
-        #    x0 = (x/sqrt_ab) - (sqrt_1mab/sqrt_ab)*eps  =>  Δx0 = -(sqrt_1mab/sqrt_ab) * Δeps
+        # Guidance terms computed in epsilon space then mapped back to x0 space.
         delta_eps   = eps_cond   - eps_uncond
         delta_eps_N = eps_cond_N - eps_uncond
-        scale_eps2x0 = - (sqrt_1mab / sqrt_ab)  # [B]
+        scale_eps2x0 = - (sqrt_1mab / sqrt_ab)
         scale_b = expand(scale_eps2x0)
         delta_x0   = scale_b * delta_eps
         delta_x0_N = scale_b * delta_eps_N
+        
         G_cfg   = s0 * delta_x0
-        # print(f"Norm of cfg: {G_cfg.norm().item():.4f}")
         G_spe   = -s1 * delta_x0
-        # print(f"Norm of spec: {G_spe.norm().item():.4f}")
         G_dedup = -s2 * delta_x0_N
-        # print(f"Norm of dedup: {G_dedup.norm().item():.4f}")
 
-        # 9. Parabolic gating based on alpha_bar
-        lambda_min, lambda_max = 0.4, 0.5
+        # Parabolic gating based on alpha_bar
         lambda_t = lambda_min + (lambda_max - lambda_min) * (alpha_bar ** 2)
         mask = (cos_sim > lambda_t).float().view(-1, *([1] * (G_spe.ndim - 1)))
-        print(f"lambda_t: {lambda_t.item():.4f}")
+
         additional = G_spe + G_dedup + G_sim
         return G_cfg + mask * additional
 

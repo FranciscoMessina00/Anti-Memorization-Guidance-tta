@@ -61,7 +61,6 @@ def my_sample_k(
         if sampler_type == "dpmpp-3m-sde":
             return K.sampling.sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
         elif sampler_type == "my-dpmpp-3m-sde":
-            print("extra_args keys:", list(extra_args.keys()))
             return my_sample_dpmpp_3m_sde(denoiser, x, sigmas, disable=False, callback=callback, extra_args=extra_args)
     else:
         raise ValueError(f"Unknown sampler type {sampler_type}")
