@@ -51,7 +51,7 @@ Minimal JSON format example:
 ```json
 {
   "1234": {
-    "embedding": [0.0123, -0.0456, ...],
+    "embedding": [0.0123, -0.0456, 0.1546],
     "conditioning": {
       "prompt": "An acoustic drum loop, 110 bpm",
       "seconds_start": 0.0,
@@ -116,28 +116,30 @@ If you use this code in academic work, please cite:
 Thesis work:
 
 ```
-@misc{messina2025mitigatingdatareplicationtexttoaudio,
-			title={Mitigating data replication in text-to-audio generative diffusion models through anti-memorization guidance}, 
-			author={Francisco Messina and Francesca Ronchini and Luca Comanducci and Paolo Bestagini and Fabio Antonacci},
-			year={2025},
-			eprint={2509.14934},
-			archivePrefix={arXiv},
-			primaryClass={eess.AS},
-			url={https://arxiv.org/abs/2509.14934}, 
+@misc{
+	messina2025mitigatingdatareplicationtexttoaudio,
+	title={Mitigating data replication in text-to-audio generative diffusion models through anti-memorization guidance}, 
+	author={Francisco Messina and Francesca Ronchini and Luca Comanducci and Paolo Bestagini and Fabio Antonacci},
+	year={2025},
+	eprint={2509.14934},
+	archivePrefix={arXiv},
+	primaryClass={eess.AS},
+	url={https://arxiv.org/abs/2509.14934}, 
 }
 ```
 
 Stable Audio Open:
 
 ```
-@misc{evans2024stableaudioopen,
-			title={Stable Audio Open}, 
-			author={Zach Evans and Julian D. Parker and CJ Carr and Zack Zukowski and Josiah Taylor and Jordi Pons},
-			year={2024},
-			eprint={2407.14358},
-			archivePrefix={arXiv},
-			primaryClass={cs.SD},
-			url={https://arxiv.org/abs/2407.14358}, 
+@misc{
+	evans2024stableaudioopen,
+	title={Stable Audio Open}, 
+	author={Zach Evans and Julian D. Parker and CJ Carr and Zack Zukowski and Josiah Taylor and Jordi Pons},
+	year={2024},
+	eprint={2407.14358},
+	archivePrefix={arXiv},
+	primaryClass={cs.SD},
+	url={https://arxiv.org/abs/2407.14358}, 
 }
 ```
 
